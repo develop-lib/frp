@@ -79,6 +79,8 @@ type Control struct {
 	// msgDispatcher is a wrapper for control connection.
 	// It provides a channel for sending messages, and you can register handlers to process messages based on their respective types.
 	msgDispatcher *msg.Dispatcher
+
+	handleResult func(*NewProxyResp)
 }
 
 func NewControl(ctx context.Context, sessionCtx *SessionContext) (*Control, error) {
@@ -175,6 +177,23 @@ func (ctl *Control) handleNewProxyResp(m msg.Message) {
 	} else {
 		xl.Infof("[%s] start proxy success", proxyName)
 	}
+
+	if ctl.handleResult == nil {
+		return
+	}
+
+	resp := &NewProxyResp{
+		State: true,
+		Name:  inMsg.ProxyName,
+		Addr:  inMsg.RemoteAddr,
+		Error: err,
+	}
+
+	if err != nil {
+		resp.State = false
+	}
+
+	go ctl.handleResult(resp)
 }
 
 func (ctl *Control) handleNatHoleResp(m msg.Message) {

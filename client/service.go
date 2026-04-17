@@ -93,6 +93,8 @@ type ServiceOptions struct {
 	//
 	// If it is not set, the default frpc implementation will be used.
 	HandleWorkConnCb func(*v1.ProxyBaseConfig, net.Conn, *msg.StartWorkConn) bool
+
+	HandleResult func(*NewProxyResp)
 }
 
 // setServiceOptionsDefault sets the default values for ServiceOptions.
@@ -156,6 +158,8 @@ type Service struct {
 
 	connectorCreator func(context.Context, *v1.ClientCommonConfig) Connector
 	handleWorkConnCb func(*v1.ProxyBaseConfig, net.Conn, *msg.StartWorkConn) bool
+
+	HandleResult func(*NewProxyResp)
 }
 
 func NewService(options ServiceOptions) (*Service, error) {
@@ -210,6 +214,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 		storeSource:      storeSource,
 		connectorCreator: options.ConnectorCreator,
 		handleWorkConnCb: options.HandleWorkConnCb,
+		HandleResult:     options.HandleResult,
 	}
 
 	if webServer != nil {
@@ -236,6 +241,7 @@ func (svr *Service) Run(ctx context.Context) error {
 		if err := svr.vnetController.Init(); err != nil {
 			log.Errorf("init virtual network controller error: %v", err)
 			svr.stop()
+			svr.handelResultCall(err)
 			return err
 		}
 		go func() {
@@ -262,6 +268,7 @@ func (svr *Service) Run(ctx context.Context) error {
 		cancelCause := cancelErr{}
 		_ = errors.As(context.Cause(svr.ctx), &cancelCause)
 		svr.stop()
+		svr.handelResultCall(cancelCause.Err)
 		return fmt.Errorf("login to the server failed: %v. With loginFailExit enabled, no additional retries will be attempted", cancelCause.Err)
 	}
 
@@ -270,6 +277,28 @@ func (svr *Service) Run(ctx context.Context) error {
 	<-svr.ctx.Done()
 	svr.stop()
 	return nil
+}
+
+type NewProxyResp struct {
+	State bool
+	Error error
+	Name  string
+	Addr  string
+}
+
+func (svr *Service) handelResultCall(err error) {
+
+	if svr.HandleResult == nil {
+		return
+	}
+
+	for _, cfg := range svr.proxyCfgs {
+		go svr.HandleResult(&NewProxyResp{
+			State: false,
+			Name:  cfg.GetBaseConfig().Name,
+			Error: err,
+		})
+	}
 }
 
 func (svr *Service) keepControllerWorking() {
@@ -415,6 +444,7 @@ func (svr *Service) loopLoginUntilSuccess(maxInterval time.Duration, firstLoginE
 		if svr.ctl != nil {
 			svr.ctl.Close()
 		}
+		ctl.handleResult = svr.HandleResult
 		svr.ctl = ctl
 		svr.ctlMu.Unlock()
 		return true, nil
