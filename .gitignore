@@ -34,3 +34,5 @@ node_modules/
 .claude/
 .sisyphus/
 .superpowers/
+
+go.sum
